@@ -26,9 +26,6 @@ object SyncthingHost {
 
     private const val GUI_USER = "syncdroid"
 
-    /** The exit status with which Syncthing asks to be started again. */
-    private const val EXIT_RESTART = 3L
-
     // Any app on the device can reach the GUI on loopback, and the GUI can sync every file this
     // app has access to. The password is new for every process and never leaves it.
     private val guiPassword =
@@ -70,8 +67,8 @@ object SyncthingHost {
 
             if (started is State.Running) {
                 // Returns when the user shuts Syncthing down or restarts it from the GUI.
-                val status = Bridge.waitForExit()
-                mainThread.post { exit(restart = status == EXIT_RESTART) }
+                val restart = Bridge.waitForExit()
+                mainThread.post { exit(restart) }
             }
         }
     }

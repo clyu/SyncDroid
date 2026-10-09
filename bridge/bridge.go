@@ -138,17 +138,14 @@ func Start(configDir, homeDir, tmpDir, guiUser, guiPassword string) (guiURL stri
 	return "http://" + guiAddr + "/", nil
 }
 
-// WaitForExit blocks until Syncthing has stopped, which its GUI can make it do, and returns its
-// exit status: 3 when it asks to be restarted. It is not called Wait because the Java binding
-// would clash with Object.wait.
-func WaitForExit() int {
+// WaitForExit blocks until Syncthing has stopped, which its GUI can make it do, and reports
+// whether it asks to be started again. It is not called Wait because the Java binding would
+// clash with Object.wait.
+func WaitForExit() (restart bool) {
 	mut.Lock()
 	a := app
 	mut.Unlock()
-	if a == nil {
-		return svcutil.ExitError.AsInt()
-	}
-	return a.Wait().AsInt()
+	return a != nil && a.Wait() == svcutil.ExitRestart
 }
 
 // freeGUIAddress returns a loopback address that nothing listens on, with Syncthing's usual GUI
