@@ -1,0 +1,198 @@
+name: Android CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    outputs:
+      apk-name: ${{ steps.rename.outputs.apk-name }}
+      signed: ${{ steps.keystore.outputs.signed }}
+
+    steps:
+      # With the whole history, the Syncthing submodule comes with its tags, which is where the
+      # version of Syncthing is read from below.
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      # The Go release that Syncthing's own CI builds the pinned version with.
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "~1.27.0"
+          cache-dependency-path: |
+            syncthing/go.sum
+            bridge/go.mod
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: 9.7.1
+
+      - name: Read the Syncthing version
+        run: |
+          set -euo pipefail
+          version="$(git -C syncthing describe --tags)"
+          # Syncthing refuses to start with a version that is not of the form it expects, which
+          # in the app would be a crash at launch. This is the part of that form that
+          # `git describe` can produce.
+          if ! grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9]+)*(\.[0-9]+)*(-[^[:space:]]+)?$' <<< "$version"; then
+            echo "::error::Unexpected Syncthing version '$version'"
+            exit 1
+          fi
+          echo "SYNCTHING_VERSION=$version" >> "$GITHUB_ENV"
+          echo "SYNCTHING_STAMP=$(git -C syncthing show -s --format=%ct)" >> "$GITHUB_ENV"
+
+      # The web GUI is compiled into Syncthing from lib/api/auto/gui.files.go, which upstream
+      # generates at build time rather than checks in.
+      - name: Generate the Syncthing GUI assets
+        working-directory: syncthing
+        run: SOURCE_DATE_EPOCH="$SYNCTHING_STAMP" go generate github.com/syncthing/syncthing/lib/api/auto
+
+      - name: Build the Syncthing library
+        working-directory: bridge
+        run: |
+          set -euo pipefail
+          # go.sum is not checked in. The versions follow from go.mod and the submodule's go.mod,
+          # and Go's checksum database vouches for every module that gets downloaded.
+          go mod tidy
+          # gomobile and gobind, at the golang.org/x/mobile version that go.mod pins.
+          go install tool
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          # gomobile obeys ANDROID_NDK_HOME, which the runner does not point at its latest NDK.
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+
+          # Upstream's tags for a cgo build, and no self-upgrade: updates come as a new APK.
+          tags="noupgrade sqlite_omit_load_extension sqlite_dbstat"
+          build=github.com/syncthing/syncthing/lib/build
+          ldflags="-s -w"
+          ldflags+=" -X $build.Version=$SYNCTHING_VERSION"
+          ldflags+=" -X $build.Stamp=$SYNCTHING_STAMP"
+          ldflags+=" -X $build.User=sync-droid"
+          ldflags+=" -X $build.Host=github-actions"
+          ldflags+=" -X $build.Tags=${tags// /,}"
+          # On Android, Syncthing lists network interfaces with github.com/wlynxg/anet, which
+          # reaches into the net package in a way the linker rejects unless told otherwise.
+          ldflags+=" -checklinkname=0"
+          # Devices with 16 KB memory pages only load libraries that are aligned for them.
+          ldflags+=" -extldflags=-Wl,-z,max-page-size=16384"
+
+          mkdir -p ../app/libs
+          gomobile bind -target=android/arm64 -androidapi 30 \
+            -javapkg io.github.clyu.syncdroid \
+            -tags "$tags" -trimpath -ldflags "$ldflags" \
+            -o ../app/libs/bridge.aar .
+
+      - name: Decode signing keystore
+        id: keystore
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$SIGNING_KEYSTORE_BASE64" ]; then
+            echo "$SIGNING_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/signing.jks"
+            echo "SIGNING_KEYSTORE_PATH=$RUNNER_TEMP/signing.jks" >> "$GITHUB_ENV"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::SIGNING_KEYSTORE_BASE64 is not set; the APK is signed with a throwaway debug key and cannot update a previously installed build."
+          fi
+
+      - name: Build release APK
+        env:
+          SIGNING_KEYSTORE_PASSWORD: ${{ secrets.SIGNING_KEYSTORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+        run: gradle :app:assembleRelease
+
+      - name: Rename build outputs
+        id: rename
+        run: |
+          # The versionName the APK was built with, as recorded by the Android Gradle plugin.
+          version=$(jq -r '.elements[0].versionName // empty' app/build/outputs/apk/release/output-metadata.json)
+          if [ -z "$version" ]; then
+            echo "::error::versionName not found in app/build/outputs/apk/release/output-metadata.json"
+            exit 1
+          fi
+          apk_name="Sync-Droid-$version"
+          mv app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/$apk_name.apk"
+          mv app/build/outputs/mapping/release/mapping.txt "app/build/outputs/mapping/release/$apk_name-mapping.txt"
+          echo "apk-name=$apk_name" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.rename.outputs.apk-name }}
+          path: app/build/outputs/apk/release/${{ steps.rename.outputs.apk-name }}.apk
+          if-no-files-found: error
+
+      # Needed to retrace obfuscated stack traces from this build.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.rename.outputs.apk-name }}-mapping
+          path: app/build/outputs/mapping/release/${{ steps.rename.outputs.apk-name }}-mapping.txt
+          if-no-files-found: error
+
+  # Puts the APK on the Releases page as the "Latest Build" pre-release, so that it can be
+  # downloaded without signing in, which workflow artifacts require. An APK signed with the
+  # throwaway debug key could not update an installed build, so it is not published.
+  publish-latest:
+    if: >-
+      github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
+      && needs.build.outputs.signed == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+
+    # Every run deletes the Latest Build releases other than its own, so two runs at once would
+    # delete each other's and leave none. Queue them instead.
+    concurrency:
+      group: publish-latest
+      cancel-in-progress: false
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download the APK
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.apk-name }}
+          path: apk
+
+      # Every build gets a release under a tag of its own instead of refreshing a fixed tag, which
+      # keeps working if immutable releases are enabled: a published release then cannot have its
+      # assets replaced, and a deleted release's tag name can never be used again. Without
+      # --target the tag would go on the head of the default branch, which need not be this commit.
+      - name: Publish the Latest Build pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ci-${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" apk/*.apk --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease --title "Latest Build" \
+            --notes "Built from $GITHUB_SHA by [run $GITHUB_RUN_NUMBER]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+
+      # Only once the new release is up, so that there is always one to download. Deleting a
+      # release leaves its tag behind, hence --cleanup-tag.
+      - name: Delete the Latest Build releases of earlier runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ci-${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          old_tags="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
+            --json tagName,name,isPrerelease \
+            | jq -r --arg tag "$TAG" \
+              '.[] | select(.name == "Latest Build" and .isPrerelease and .tagName != $tag) | .tagName')"
+          for old in $old_tags; do
+            gh release delete "$old" --yes --cleanup-tag --repo "$GITHUB_REPOSITORY"
+          done

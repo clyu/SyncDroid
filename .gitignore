@@ -1,0 +1,16 @@
+.gradle/
+.kotlin/
+build/
+/local.properties
+.idea/
+*.iml
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+*.jks
+*.keystore
+
+# Built by CI: the gomobile library, and the checksums `go mod tidy` derives for it.
+/app/libs/
+/bridge/go.sum
