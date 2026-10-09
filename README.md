@@ -15,9 +15,9 @@ background Android may freeze or kill it, and swiping it away ends it.
   and points a WebView at the GUI.
 
 The GUI listens on loopback only. Because any other app on the device can reach loopback, the app
-gives the GUI a new random user and password every time it starts and logs its WebView in with
-them. The GUI authentication fields in Syncthing's settings are therefore managed by the app, and
-changing them has no lasting effect.
+gives the GUI a fixed user and a new random password every time it starts and logs its WebView in
+with them. The GUI authentication fields in Syncthing's settings are therefore managed by the app,
+and changing them has no lasting effect.
 
 ## Updating Syncthing
 
