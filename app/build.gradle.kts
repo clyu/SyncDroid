@@ -11,10 +11,10 @@ android {
         minSdk = 30
         targetSdk = 36
         // CI numbers its builds, so a later one always installs over an earlier one; local builds are 1.
-        versionCode = System.getenv("GITHUB_RUN_NUMBER")?.toInt() ?: 1
+        val runNumber = System.getenv("GITHUB_RUN_NUMBER")?.toInt() ?: 1
+        versionCode = runNumber
         // The Syncthing version inside, then the CI run number so that every build can be told apart.
-        versionName = "${(System.getenv("SYNCTHING_VERSION") ?: "v0.0.0").removePrefix("v")}." +
-            (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
+        versionName = "${(System.getenv("SYNCTHING_VERSION") ?: "v0.0.0").removePrefix("v")}.$runNumber"
 
         // The only ABI the Go library is built for.
         ndk {
