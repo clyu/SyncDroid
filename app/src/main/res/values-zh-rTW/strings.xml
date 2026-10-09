@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">SyncDroid</string>
     <string name="starting">正在啟動 Syncthing…</string>
     <string name="start_failed">Syncthing 無法啟動：\n\n%1$s\n\n請關閉 App 後重新開啟再試一次。</string>
     <string name="storage_access_title">允許存取所有檔案</string>
