@@ -159,8 +159,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
 
-    # Every run deletes the Latest Build releases other than its own, so two runs at once would
-    # delete each other's and leave none. Queue them instead.
+    # A run checks that no later run has published before it publishes its own build, which two
+    # runs at once could both get past and leave two Latest Builds. Queue them instead.
     concurrency:
       group: publish-latest
       cancel-in-progress: false
@@ -179,12 +179,25 @@ jobs:
       # keeps working if immutable releases are enabled: a published release then cannot have its
       # assets replaced, and a deleted release's tag name can never be used again. Without
       # --target the tag would go on the head of the default branch, which need not be this commit.
+      #
+      # Runs do not get here in the order they were started: a build can outlast the next one's,
+      # and an old run can be run again. Such a run has nothing to publish, since the Latest Build
+      # that is up is later than its own. The run number in the tag tells them apart.
       - name: Publish the Latest Build pre-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ci-${{ github.run_number }}
         run: |
           set -euo pipefail
+          later_tags="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
+            --json tagName,name,isPrerelease \
+            | jq -r --argjson run "$GITHUB_RUN_NUMBER" \
+              '.[] | select(.name == "Latest Build" and .isPrerelease) | .tagName
+                | select(ltrimstr("ci-") | tonumber > $run)')"
+          if [ -n "$later_tags" ]; then
+            echo "::notice::A later run has already published its build; not publishing this one."
+            exit 0
+          fi
           gh release create "$TAG" apk/*.apk --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" --prerelease --title "Latest Build" \
             --notes "Built from $GITHUB_SHA by [run $GITHUB_RUN_NUMBER]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
@@ -194,13 +207,13 @@ jobs:
       - name: Delete the Latest Build releases of earlier runs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ci-${{ github.run_number }}
         run: |
           set -euo pipefail
           old_tags="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
             --json tagName,name,isPrerelease \
-            | jq -r --arg tag "$TAG" \
-              '.[] | select(.name == "Latest Build" and .isPrerelease and .tagName != $tag) | .tagName')"
+            | jq -r --argjson run "$GITHUB_RUN_NUMBER" \
+              '.[] | select(.name == "Latest Build" and .isPrerelease) | .tagName
+                | select(ltrimstr("ci-") | tonumber < $run)')"
           for old in $old_tags; do
             gh release delete "$old" --yes --cleanup-tag --repo "$GITHUB_REPOSITORY"
           done
