@@ -168,6 +168,11 @@ jobs:
     permissions:
       contents: write
 
+    # As whom gh acts and on which repository: there is no checkout here for it to tell from.
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+
     steps:
       - name: Download the APK
         uses: actions/download-artifact@v8
@@ -185,12 +190,10 @@ jobs:
       # that is up is later than its own. The run number in the tag tells them apart.
       - name: Publish the Latest Build pre-release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ci-${{ github.run_number }}
         run: |
           set -euo pipefail
-          later_tags="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
-            --json tagName,name,isPrerelease \
+          later_tags="$(gh release list --limit 100 --json tagName,name,isPrerelease \
             | jq -r --argjson run "$GITHUB_RUN_NUMBER" \
               '.[] | select(.name == "Latest Build" and .isPrerelease) | .tagName
                 | select(ltrimstr("ci-") | tonumber > $run)')"
@@ -198,22 +201,19 @@ jobs:
             echo "::notice::A later run has already published its build; not publishing this one."
             exit 0
           fi
-          gh release create "$TAG" apk/*.apk --repo "$GITHUB_REPOSITORY" \
+          gh release create "$TAG" apk/*.apk \
             --target "$GITHUB_SHA" --prerelease --title "Latest Build" \
             --notes "Built from $GITHUB_SHA by [run $GITHUB_RUN_NUMBER]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
 
       # Only once the new release is up, so that there is always one to download. Deleting a
       # release leaves its tag behind, hence --cleanup-tag.
       - name: Delete the Latest Build releases of earlier runs
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          old_tags="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
-            --json tagName,name,isPrerelease \
+          old_tags="$(gh release list --limit 100 --json tagName,name,isPrerelease \
             | jq -r --argjson run "$GITHUB_RUN_NUMBER" \
               '.[] | select(.name == "Latest Build" and .isPrerelease) | .tagName
                 | select(ltrimstr("ci-") | tonumber < $run)')"
           for old in $old_tags; do
-            gh release delete "$old" --yes --cleanup-tag --repo "$GITHUB_REPOSITORY"
+            gh release delete "$old" --yes --cleanup-tag
           done
