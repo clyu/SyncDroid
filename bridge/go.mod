@@ -1,4 +1,4 @@
-module github.com/clyu/sync-droid/bridge
+module github.com/clyu/SyncDroid/bridge
 
 go 1.26.2
 

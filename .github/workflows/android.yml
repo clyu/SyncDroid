@@ -80,7 +80,7 @@ jobs:
           ldflags="-s -w"
           ldflags+=" -X $build.Version=$SYNCTHING_VERSION"
           ldflags+=" -X $build.Stamp=$SYNCTHING_STAMP"
-          ldflags+=" -X $build.User=sync-droid"
+          ldflags+=" -X $build.User=SyncDroid"
           ldflags+=" -X $build.Host=github-actions"
           ldflags+=" -X $build.Tags=${tags// /,}"
           # On Android, Syncthing lists network interfaces with github.com/wlynxg/anet, which
@@ -123,7 +123,7 @@ jobs:
             echo "::error::versionName not found in app/build/outputs/apk/release/output-metadata.json"
             exit 1
           fi
-          apk_name="Sync-Droid-$version"
+          apk_name="SyncDroid-$version"
           mv app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/$apk_name.apk"
           mv app/build/outputs/mapping/release/mapping.txt "app/build/outputs/mapping/release/$apk_name-mapping.txt"
           echo "apk-name=$apk_name" >> "$GITHUB_OUTPUT"

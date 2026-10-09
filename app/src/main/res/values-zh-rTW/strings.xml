@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Sync Droid</string>
+    <string name="app_name">SyncDroid</string>
     <string name="starting">正在啟動 Syncthing…</string>
     <string name="start_failed">Syncthing 無法啟動：\n\n%1$s\n\n請關閉 App 後重新開啟再試一次。</string>
     <string name="storage_access_title">允許存取所有檔案</string>
-    <string name="storage_access_message">Syncthing 只能同步它有權讀寫的資料夾。請在下一個畫面允許 Sync Droid 管理所有檔案。</string>
+    <string name="storage_access_message">Syncthing 只能同步它有權讀寫的資料夾。請在下一個畫面允許 SyncDroid 管理所有檔案。</string>
     <string name="storage_access_grant">開啟設定</string>
     <string name="storage_access_skip">略過</string>
 </resources>

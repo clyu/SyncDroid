@@ -1,4 +1,4 @@
-# Sync Droid
+# SyncDroid
 
 A minimal Android app for [Syncthing](https://syncthing.net): Syncthing runs inside the app's
 process, and the app's whole interface is a WebView on Syncthing's own web GUI.

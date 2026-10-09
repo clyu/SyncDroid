@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Sync Droid</string>
+    <string name="app_name">SyncDroid</string>
     <string name="starting">Starting Syncthing…</string>
     <string name="start_failed">Syncthing could not start:\n\n%1$s\n\nClose the app and open it again to retry.</string>
     <string name="storage_access_title">Allow access to all files</string>
-    <string name="storage_access_message">Syncthing can only sync the folders it is allowed to read and write. On the next screen, allow Sync Droid to manage all files.</string>
+    <string name="storage_access_message">Syncthing can only sync the folders it is allowed to read and write. On the next screen, allow SyncDroid to manage all files.</string>
     <string name="storage_access_grant">Open settings</string>
     <string name="storage_access_skip">Skip</string>
 </resources>
