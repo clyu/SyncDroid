@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- The activity draws behind the system bars and pads its content itself. Before Android 15
-         the bars still have a colour of their own, hence the transparent ones. -->
+    <!-- From Android 15 on the system bars are transparent and show the window behind them.
+         Before that they have a colour of their own, which is made transparent to match. -->
     <style name="Theme.SyncDroid" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>

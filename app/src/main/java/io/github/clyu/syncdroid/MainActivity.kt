@@ -54,9 +54,9 @@ class MainActivity : Activity() {
         }
         setContentView(root)
 
-        // Android 15 and later draw every app edge to edge; do the same on earlier versions, and
-        // keep the content clear of the system bars and the keyboard.
-        window.setDecorFitsSystemWindows(false)
+        // Android 15 and later draw the app edge to edge, which leaves it to the app to keep its
+        // content clear of the system bars and the keyboard. Earlier versions do that themselves
+        // and report nothing here that is left to keep clear of.
         root.setOnApplyWindowInsetsListener { view, insets ->
             val obscured = insets.getInsets(
                 WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or WindowInsets.Type.ime()
