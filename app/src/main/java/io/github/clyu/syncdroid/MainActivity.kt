@@ -28,9 +28,6 @@ class MainActivity : Activity() {
 
     private var storageAccessDialog: AlertDialog? = null
 
-    /** Whether the user chose to go on without access to all files. */
-    private var storageAccessSkipped = false
-
     private var multicastLock: WifiManager.MulticastLock? = null
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -82,7 +79,7 @@ class MainActivity : Activity() {
         super.onResume()
         // Also where the user comes back to from the system's settings.
         if (SyncthingHost.state != null) return
-        if (Environment.isExternalStorageManager() || storageAccessSkipped) {
+        if (Environment.isExternalStorageManager()) {
             SyncthingHost.start(this)
         } else if (storageAccessDialog == null) {
             askForStorageAccess()
@@ -123,10 +120,7 @@ class MainActivity : Activity() {
             .setMessage(R.string.storage_access_message)
             .setCancelable(false)
             .setPositiveButton(R.string.storage_access_grant) { _, _ -> openStorageAccessSettings() }
-            .setNegativeButton(R.string.storage_access_skip) { _, _ ->
-                storageAccessSkipped = true
-                SyncthingHost.start(this)
-            }
+            .setNegativeButton(R.string.storage_access_skip) { _, _ -> SyncthingHost.start(this) }
             .setOnDismissListener { storageAccessDialog = null }
             .show()
     }
