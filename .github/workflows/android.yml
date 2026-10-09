@@ -2,7 +2,17 @@ name: Android CI
 
 on:
   push:
-  pull_request:
+    # Only what goes into the APK. The submodule is the single path `syncthing`, which changes
+    # when it is moved to another commit.
+    paths:
+      - .github/workflows/android.yml
+      - .gitmodules
+      - syncthing
+      - bridge/**
+      - app/**
+      - gradle/**
+      - "*.gradle.kts"
+      - gradle.properties
   workflow_dispatch:
 
 jobs:
@@ -145,9 +155,7 @@ jobs:
   # downloaded without signing in, which workflow artifacts require. An APK signed with the
   # throwaway debug key could not update an installed build, so it is not published.
   publish-latest:
-    if: >-
-      github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
-      && needs.build.outputs.signed == 'true'
+    if: github.ref == 'refs/heads/master' && needs.build.outputs.signed == 'true'
     needs: build
     runs-on: ubuntu-latest
 
