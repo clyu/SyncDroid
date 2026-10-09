@@ -2,9 +2,11 @@ package io.github.clyu.syncdroid
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
 import android.util.Base64
 import io.github.clyu.syncdroid.bridge.Bridge
 import java.io.File
@@ -56,6 +58,7 @@ object SyncthingHost {
                         File(app.filesDir, "syncthing").path,
                         Environment.getExternalStorageDirectory().path,
                         app.cacheDir.path,
+                        deviceName(app),
                         GUI_USER,
                         guiPassword,
                     )
@@ -72,6 +75,17 @@ object SyncthingHost {
             }
         }
     }
+
+    /**
+     * The device name under "About phone" in the system's settings, or the model where the device
+     * keeps that name elsewhere or does not let apps read it.
+     */
+    private fun deviceName(context: Context): String =
+        try {
+            Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME)
+        } catch (e: SecurityException) {
+            null
+        } ?: Build.MODEL
 
     private fun setState(newState: State) {
         state = newState

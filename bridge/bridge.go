@@ -34,11 +34,12 @@ var (
 
 // Start runs Syncthing and returns the URL of its GUI once that is being served. The GUI only
 // lets in the given user. Syncthing keeps its configuration, keys and database in configDir,
-// expands "~" in folder paths to homeDir, and puts temporary files in tmpDir.
+// expands "~" in folder paths to homeDir, and puts temporary files in tmpDir. This device goes by
+// deviceName unless the user has given it a name in the GUI.
 //
 // It follows syncthingMain in Syncthing's cmd/syncthing/main.go, which sets up state that is
 // global to the process, so a process can call it only once, successful or not.
-func Start(configDir, homeDir, tmpDir, guiUser, guiPassword string) (guiURL string, err error) {
+func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) (guiURL string, err error) {
 	mut.Lock()
 	defer mut.Unlock()
 	if attempted {
@@ -104,13 +105,20 @@ func Start(configDir, homeDir, tmpDir, guiUser, guiPassword string) (guiURL stri
 	earlyService.Add(cfg)
 	config.RegisterInfoMetrics(cfg)
 
+	// Syncthing names a new device after its host, which on Android is "localhost" on every
+	// device. Any other name is one the user chose in the GUI.
+	hostname, _ := os.Hostname()
+
 	var passwordErr error
 	if _, err := cfg.Modify(func(c *config.Configuration) {
 		c.GUI.Enabled = true
 		c.GUI.User = guiUser
 		passwordErr = c.GUI.SetPassword(guiPassword)
+		if _, i, ok := c.Device(cfg.MyID()); ok && c.Devices[i].Name == hostname {
+			c.Devices[i].Name = deviceName
+		}
 	}); err != nil {
-		return "", fmt.Errorf("protect the GUI: %w", err)
+		return "", fmt.Errorf("adjust the configuration: %w", err)
 	}
 	if passwordErr != nil {
 		return "", fmt.Errorf("protect the GUI: %w", passwordErr)
