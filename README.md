@@ -19,18 +19,6 @@ gives the GUI a new random user and password every time it starts and logs its W
 them. The GUI authentication fields in Syncthing's settings are therefore managed by the app, and
 changing them has no lasting effect.
 
-## Building
-
-Everything is built by GitHub Actions (`.github/workflows/android.yml`), for arm64 only. Every push
-uploads the APK as a workflow artifact. Pushes to `master` also publish it as the `Latest Build`
-pre-release, provided these repository secrets are set so that the APK is signed with a fixed key:
-
-| Secret | Value |
-|---|---|
-| `SIGNING_KEYSTORE_BASE64` | The keystore file, base64 encoded |
-| `SIGNING_KEYSTORE_PASSWORD` | The password of the keystore and of the key |
-| `SIGNING_KEY_ALIAS` | The alias of the key |
-
 ## Updating Syncthing
 
 ```sh
