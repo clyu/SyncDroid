@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/thejerf/suture/v4"
@@ -27,15 +28,18 @@ const (
 )
 
 var (
-	mut       sync.Mutex
-	attempted bool
-	app       *syncthing.App
+	mut           sync.Mutex
+	attempted     bool
+	app           *syncthing.App
+	httpsCertFile atomic.Pointer[string]
 )
 
 // Start runs Syncthing and returns the URL of its GUI once that is being served. The GUI only
 // lets in the given user. Syncthing keeps its configuration, keys and database in configDir,
 // expands "~" in folder paths to homeDir, and puts temporary files in tmpDir. This device goes by
 // deviceName unless the user has given it a name in the GUI.
+//
+// The URL is HTTPS: see the comment on the GUI address below and CertFile.
 //
 // It follows syncthingMain in Syncthing's cmd/syncthing/main.go, which sets up state that is
 // global to the process, so a process can call it only once, successful or not.
@@ -48,7 +52,11 @@ func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) 
 	attempted = true
 
 	// Bound here rather than left to the configuration, so that the GUI is always on loopback,
-	// without TLS, and on a port that is known to be free.
+	// over TLS, and on a port that is known to be free. Every app on the device can reach a
+	// loopback listener, so TLS is what keeps another app that grabs the port from impersonating
+	// the GUI to the WebView: Syncthing serves its self-signed certificate, whose key never leaves
+	// this app's private storage, and the WebView pins it (see CertFile). The https:// scheme is
+	// how STGUIADDRESS turns TLS on.
 	guiAddr, err := freeGUIAddress()
 	if err != nil {
 		return "", fmt.Errorf("find a port for the GUI: %w", err)
@@ -57,7 +65,7 @@ func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) 
 	for name, value := range map[string]string{
 		"HOME":         homeDir,
 		"TMPDIR":       tmpDir,
-		"STGUIADDRESS": guiAddr,
+		"STGUIADDRESS": "https://" + guiAddr,
 	} {
 		if err := os.Setenv(name, value); err != nil {
 			return "", err
@@ -72,6 +80,11 @@ func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) 
 			return "", err
 		}
 	}
+	// Where Syncthing will put the GUI's HTTPS certificate, for CertFile to hand to the app to
+	// pin. The path is known now that the locations are set; the file itself appears when the GUI
+	// starts listening, which is before Start returns.
+	guiCertFile := locations.Get(locations.HTTPSCertFile)
+	httpsCertFile.Store(&guiCertFile)
 	if err := syncthing.EnsureDir(configDir, 0o700); err != nil {
 		return "", fmt.Errorf("create %s: %w", configDir, err)
 	}
@@ -112,6 +125,9 @@ func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) 
 	var passwordErr error
 	if _, err := cfg.Modify(func(c *config.Configuration) {
 		c.GUI.Enabled = true
+		// STGUIADDRESS puts the GUI on HTTPS whatever this says, but this is what the GUI's
+		// settings show, and they should not claim otherwise.
+		c.GUI.RawUseTLS = true
 		c.GUI.User = guiUser
 		passwordErr = c.GUI.SetPassword(guiPassword)
 		if _, i, ok := c.Device(cfg.MyID()); ok && c.Devices[i].Name == hostname {
@@ -143,7 +159,20 @@ func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) 
 	}
 
 	app = a
-	return "http://" + guiAddr + "/", nil
+	return "https://" + guiAddr + "/", nil
+}
+
+// CertFile returns the path of the GUI's HTTPS certificate, and "" until Start has worked it out.
+// It does not take mut, which Start holds for as long as it runs, so it answers at once even then,
+// and the path can come before the file: that is only sure to be there once Start has returned
+// without an error. The GUI is served over TLS on loopback (see Start), and the app pins this
+// certificate so that another app that seizes the port cannot impersonate the GUI: that app has no
+// way to present this certificate, whose private key stays in this app's private storage.
+func CertFile() string {
+	if path := httpsCertFile.Load(); path != nil {
+		return *path
+	}
+	return ""
 }
 
 // WaitForExit blocks until Syncthing has stopped, which its GUI can make it do, and reports

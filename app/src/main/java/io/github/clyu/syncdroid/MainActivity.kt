@@ -6,6 +6,8 @@ import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
+import android.net.http.SslCertificate
+import android.net.http.SslError
 import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.os.Environment
@@ -15,11 +17,14 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.WindowInsets
+import android.webkit.SslErrorHandler
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.TextView
+import java.security.cert.CertificateFactory
+import java.security.cert.X509Certificate
 
 /** Shows the Syncthing GUI in a WebView, after asking for access to the files it is to sync. */
 class MainActivity : Activity() {
@@ -150,6 +155,31 @@ class MainActivity : Activity() {
                 // Nothing on the device opens this kind of link.
             }
             return true
+        }
+
+        // The GUI is served over HTTPS with a certificate Syncthing generates in this app's
+        // private storage, which Android does not trust on its own. Rather than trust it blindly,
+        // accept it only when it is exactly the certificate on disk. Any app on the device can
+        // listen on the GUI's loopback port, but only this app holds that certificate's private
+        // key, so this is what stops another app that grabs the port from impersonating the GUI.
+        // For that, every certificate presented there has to come through here, which is why
+        // network_security_config.xml has Android trust none at all for 127.0.0.1.
+        override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
+            if (isGuiCertificate(error.certificate)) handler.proceed() else handler.cancel()
+        }
+    }
+
+    /** Whether [presented] is exactly Syncthing's current GUI certificate. */
+    private fun isGuiCertificate(presented: SslCertificate): Boolean {
+        val pinned = SyncthingHost.guiCertFile ?: return false
+        return try {
+            val expected = pinned.inputStream().use {
+                CertificateFactory.getInstance("X.509").generateCertificate(it)
+            } as X509Certificate
+            presented.x509Certificate?.encoded?.contentEquals(expected.encoded) == true
+        } catch (e: Exception) {
+            // A certificate we cannot read or parse is one we will not trust.
+            false
         }
     }
 }

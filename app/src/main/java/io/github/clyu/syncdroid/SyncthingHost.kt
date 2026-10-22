@@ -37,6 +37,16 @@ object SyncthingHost {
     val guiAuthorization: String =
         "Basic " + Base64.encodeToString("$GUI_USER:$guiPassword".toByteArray(), Base64.NO_WRAP)
 
+    /**
+     * Syncthing's self-signed certificate for the GUI, which the WebView pins: the GUI is served
+     * over TLS on loopback, and because any app on the device can reach loopback, pinning this
+     * certificate is what stops another app that grabs the port from impersonating the GUI. Only
+     * meaningful once [state] is [State.Running]; before that it may be null, and the file it
+     * names may not be there yet.
+     */
+    val guiCertFile: File?
+        get() = Bridge.certFile().takeIf(String::isNotEmpty)?.let(::File)
+
     /** Null until [start] is called. */
     var state: State? = null
         private set

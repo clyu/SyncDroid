@@ -14,7 +14,9 @@ background Android may freeze or kill it, and swiping it away ends it.
 - `app/` is the Android app: it asks for access to all files on first launch, starts the bridge,
   and points a WebView at the GUI.
 
-The GUI listens on loopback only. Because any other app on the device can reach loopback, the app
+The GUI listens on loopback only, over HTTPS. Because any other app on the device can reach
+loopback, the WebView pins Syncthing's self-signed GUI certificate, so an app that grabs the port
+cannot impersonate the GUI (its private key never leaves the app's private storage). The app also
 gives the GUI a fixed user and a new random password every time it starts and logs its WebView in
 with them. The GUI authentication fields in Syncthing's settings are therefore managed by the app,
 and changing them has no lasting effect.

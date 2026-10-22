@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The WebView talks plain HTTP to the Syncthing GUI on loopback, and to nothing else. -->
+<!-- The WebView talks to the Syncthing GUI on loopback over HTTPS, pinning its certificate in
+     MainActivity, and to nothing else. No cleartext anywhere. -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
-    <domain-config cleartextTrafficPermitted="true">
+    <!-- MainActivity only sees the certificates that Android rejects, so one for the GUI's address
+         that a certificate authority vouched for would get past the pin unseen. Android therefore
+         trusts no authority at all for that address, not even the system's. -->
+    <domain-config>
         <domain includeSubdomains="false">127.0.0.1</domain>
+        <trust-anchors />
     </domain-config>
 </network-security-config>
