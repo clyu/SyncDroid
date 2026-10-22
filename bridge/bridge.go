@@ -22,6 +22,7 @@ import (
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/locations"
 	"github.com/syncthing/syncthing/lib/rand"
+	"github.com/syncthing/syncthing/lib/structutil"
 	"github.com/syncthing/syncthing/lib/svcutil"
 	"github.com/syncthing/syncthing/lib/syncthing"
 )
@@ -55,10 +56,12 @@ var (
 
 // Start runs Syncthing and returns the URL of its GUI once that is being served. The GUI only
 // lets in the given user, and every way in is new with each start: the password is the given one,
-// the API key is replaced, and the sessions that earlier runs left in the database are ended.
-// Syncthing keeps its configuration, keys and database in configDir, expands "~" in folder paths
-// to homeDir, and puts temporary files in tmpDir. This device goes by deviceName unless the user
-// has given it a name in the GUI.
+// the API key is replaced, and the sessions that earlier runs left in the database are ended. Of
+// the GUI's other settings only the theme is kept, and the rest start over from Syncthing's
+// defaults, so that nothing changed in an earlier run decides how, or whether, the GUI asks for
+// the password, or whether a login holds. Syncthing keeps its configuration, keys and database in
+// configDir, expands "~" in folder paths to homeDir, and puts temporary files in tmpDir. This
+// device goes by deviceName unless the user has given it a name in the GUI.
 //
 // The URL is HTTPS: see the comment on the GUI address below and CertFile.
 //
@@ -145,6 +148,17 @@ func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) 
 
 	var passwordErr error
 	if _, err := cfg.Modify(func(c *config.Configuration) {
+		// Whoever has a session can change any of the GUI's settings, and they would stay changed
+		// from one run to the next. Some decide how, or whether, the GUI asks for the password and
+		// whom it answers, and the password is only worth something with them as they are by
+		// default. Others decide whether the WebView stays logged in: its session cookie has to go
+		// along with the requests to /rest/, and its session must not run out between them. So
+		// the GUI starts over from Syncthing's defaults, keeping only the theme, which is the
+		// user's to choose. That also covers the settings that later versions of Syncthing add.
+		var gui config.GUIConfiguration
+		structutil.SetDefaults(&gui)
+		gui.Theme = c.GUI.Theme
+		c.GUI = gui
 		c.GUI.Enabled = true
 		// STGUIADDRESS puts the GUI on HTTPS whatever this says, but this is what the GUI's
 		// settings show, and they should not claim otherwise.
