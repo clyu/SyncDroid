@@ -24,6 +24,14 @@ key that got out stops working once the app is started again. The GUI authentica
 Syncthing's settings, and the API key, are therefore managed by the app, and changing them has no
 lasting effect.
 
+An app that holds the GUI's port can still keep the GUI out of reach. It gets its chance when
+Syncthing binds the port again after a change to the GUI's own settings, such as the theme, and
+Syncthing does not get the port back for as long as the other app keeps it. The app therefore checks
+every few seconds whether another app holds the GUI's port, and when one has for about fifteen
+seconds it restarts, which puts the GUI on another port. It does not restart when the GUI merely
+stops answering: any app can make it do that without holding the port, by opening connections to it
+that send nothing, and a restart would not get the GUI away from that app.
+
 ## Updating Syncthing
 
 ```sh

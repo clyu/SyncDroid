@@ -6,10 +6,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
+	"net/netip"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/thejerf/suture/v4"
@@ -34,6 +38,13 @@ const (
 // lib/syncthing/syncthing.go hands the GUI a store from NewMiscDB, and NewMiscDB in
 // internal/db/typed.go makes a store that puts "misc/" in front of its keys.
 const sessionsKey = "misc/sessions"
+
+// How watchGUI keeps an eye on the GUI's port: how often it looks, and how many looks in a row that
+// find the port in another process's hands make it give up on this process.
+const (
+	guiCheckInterval = 5 * time.Second
+	guiLostAfter     = 3
+)
 
 var (
 	mut           sync.Mutex
@@ -75,7 +86,7 @@ func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) 
 	for name, value := range map[string]string{
 		"HOME":         homeDir,
 		"TMPDIR":       tmpDir,
-		"STGUIADDRESS": "https://" + guiAddr,
+		"STGUIADDRESS": "https://" + guiAddr.String(),
 	} {
 		if err := os.Setenv(name, value); err != nil {
 			return "", err
@@ -181,7 +192,8 @@ func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) 
 	}
 
 	app = a
-	return "https://" + guiAddr + "/", nil
+	go watchGUI(a, guiAddr)
+	return "https://" + guiAddr.String() + "/", nil
 }
 
 // CertFile returns the path of the GUI's HTTPS certificate, and "" until Start has worked it out.
@@ -197,9 +209,9 @@ func CertFile() string {
 	return ""
 }
 
-// WaitForExit blocks until Syncthing has stopped, which its GUI can make it do, and reports
-// whether it asks to be started again. It is not called Wait because the Java binding would
-// clash with Object.wait.
+// WaitForExit blocks until Syncthing has stopped, which its GUI can make it do and which it does
+// itself when it loses the GUI (see watchGUI), and reports whether it asks to be started again. It
+// is not called Wait because the Java binding would clash with Object.wait.
 func WaitForExit() (restart bool) {
 	mut.Lock()
 	a := app
@@ -207,9 +219,110 @@ func WaitForExit() (restart bool) {
 	return a != nil && a.Wait() == svcutil.ExitRestart
 }
 
+// watchGUI stops Syncthing, asking to be started again, when another process holds the GUI's port.
+// Syncthing lets go of the port and binds it again whenever the GUI's own settings change, and an
+// app that takes the port in between can keep it for as long as it likes, with the GUI out of reach
+// all that time: Syncthing neither gets the port back nor gives up. Starting over does, since a
+// start finds the port taken and has the GUI listen on another one (see freeGUIAddress).
+//
+// It goes by who holds the port, not by whether the GUI answers. Any app can keep the GUI from
+// answering without taking the port, by opening connections to it that send nothing, since
+// Syncthing waits up to a second for each new connection to speak before it takes the next one;
+// starting over would not get the GUI away from that app and would only keep cutting the syncing
+// short. Nor does a port that nobody holds count against the GUI: Syncthing is then either on its
+// way out, where a stop from here would turn a shutdown into a restart, or binding the port again,
+// which can take it longer than fifteen seconds after the GUI's settings have changed several
+// times in quick succession, since its supervisor counts each change as a failure and pauses after
+// too many. Fewer than guiLostAfter looks in a row that find the port taken are let go, which
+// covers Syncthing binding the port in the middle of a look (see guiPortTaken).
+func watchGUI(a *syncthing.App, addr netip.AddrPort) {
+	stopped := make(chan struct{})
+	go func() {
+		a.Wait()
+		close(stopped)
+	}()
+
+	ticker := time.NewTicker(guiCheckInterval)
+	defer ticker.Stop()
+	misses := 0
+	for {
+		select {
+		case <-stopped:
+			return
+		case <-ticker.C:
+		}
+		if !guiPortTaken(addr) {
+			misses = 0
+			continue
+		}
+		if misses++; misses >= guiLostAfter {
+			slog.Warn("Another process holds the GUI's port; stopping Syncthing to be started again", slog.String("address", addr.String()))
+			a.Stop(svcutil.ExitRestart)
+			return
+		}
+	}
+}
+
+// guiPortTaken reports whether a process other than this one holds the port of addr, an IPv4
+// address as freeGUIAddress hands out. It first looks among this process's own sockets for one that
+// listens on addr, which would be Syncthing's, and only when there is none tries to bind addr
+// itself. Go sets SO_REUSEADDR on every socket it listens on, Syncthing's included, and with it a
+// bind fails only over a socket that listens on the address or one that was bound there without it.
+// This bind sets it too, so it fails when Syncthing's would, and since it does not listen, it never
+// stands in the way of Syncthing binding the port at the same moment. Syncthing can still bind the
+// port between the two steps, and then passes for another process.
+func guiPortTaken(addr netip.AddrPort) bool {
+	if listening, err := listensOn(addr); err != nil || listening {
+		// Syncthing has the port, or there is no telling whether it has.
+		return false
+	}
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM|syscall.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return false
+	}
+	defer syscall.Close(fd)
+	if err := syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1); err != nil {
+		return false
+	}
+	err = syscall.Bind(fd, &syscall.SockaddrInet4{Port: int(addr.Port()), Addr: addr.Addr().As4()})
+	return errors.Is(err, syscall.EADDRINUSE)
+}
+
+// listensOn reports whether one of this process's own sockets listens on addr. Android does not let
+// apps read the device's sockets out of /proc/net, which would say whose a socket is, so this goes
+// through the file descriptors in /proc/self/fd instead. One that is closed while it looks, and
+// maybe opened again as something else, does no harm, since this only asks each one what it is.
+func listensOn(addr netip.AddrPort) (bool, error) {
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		fd, err := strconv.Atoi(entry.Name())
+		if err != nil {
+			continue
+		}
+		// Only a socket has an address. The connections that the GUI has accepted have the GUI's
+		// too, but do not listen.
+		sa, err := syscall.Getsockname(fd)
+		if err != nil {
+			continue
+		}
+		in4, ok := sa.(*syscall.SockaddrInet4)
+		if !ok || netip.AddrPortFrom(netip.AddrFrom4(in4.Addr), uint16(in4.Port)) != addr {
+			continue
+		}
+		listening, err := syscall.GetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_ACCEPTCONN)
+		if err == nil && listening != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // freeGUIAddress returns a loopback address that nothing listens on, with Syncthing's usual GUI
 // port unless another Syncthing on the device already has it.
-func freeGUIAddress() (string, error) {
+func freeGUIAddress() (netip.AddrPort, error) {
 	var lastErr error
 	for _, addr := range []string{"127.0.0.1:8384", "127.0.0.1:0"} {
 		listener, err := net.Listen("tcp", addr)
@@ -217,9 +330,9 @@ func freeGUIAddress() (string, error) {
 			lastErr = err
 			continue
 		}
-		addr = listener.Addr().String()
+		found, err := netip.ParseAddrPort(listener.Addr().String())
 		listener.Close()
-		return addr, nil
+		return found, err
 	}
-	return "", lastErr
+	return netip.AddrPort{}, lastErr
 }
