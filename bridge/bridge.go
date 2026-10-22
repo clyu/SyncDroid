@@ -17,6 +17,7 @@ import (
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/locations"
+	"github.com/syncthing/syncthing/lib/rand"
 	"github.com/syncthing/syncthing/lib/svcutil"
 	"github.com/syncthing/syncthing/lib/syncthing"
 )
@@ -27,6 +28,13 @@ const (
 	dbDeleteRetention     = 10920 * time.Hour
 )
 
+// Where Syncthing's GUI keeps the sessions it has handed out: "sessions" in the "misc" namespace
+// of the database's key-value store. Three places in Syncthing make it so: newTokenCookieManager
+// in lib/api/tokenmanager.go keeps them under "sessions" in the store it is given, startup in
+// lib/syncthing/syncthing.go hands the GUI a store from NewMiscDB, and NewMiscDB in
+// internal/db/typed.go makes a store that puts "misc/" in front of its keys.
+const sessionsKey = "misc/sessions"
+
 var (
 	mut           sync.Mutex
 	attempted     bool
@@ -35,9 +43,11 @@ var (
 )
 
 // Start runs Syncthing and returns the URL of its GUI once that is being served. The GUI only
-// lets in the given user. Syncthing keeps its configuration, keys and database in configDir,
-// expands "~" in folder paths to homeDir, and puts temporary files in tmpDir. This device goes by
-// deviceName unless the user has given it a name in the GUI.
+// lets in the given user, and every way in is new with each start: the password is the given one,
+// the API key is replaced, and the sessions that earlier runs left in the database are ended.
+// Syncthing keeps its configuration, keys and database in configDir, expands "~" in folder paths
+// to homeDir, and puts temporary files in tmpDir. This device goes by deviceName unless the user
+// has given it a name in the GUI.
 //
 // The URL is HTTPS: see the comment on the GUI address below and CertFile.
 //
@@ -130,6 +140,9 @@ func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) 
 		c.GUI.RawUseTLS = true
 		c.GUI.User = guiUser
 		passwordErr = c.GUI.SetPassword(guiPassword)
+		// The API key lets in whoever has it, without the password, and Syncthing keeps it in the
+		// configuration from one run to the next. Nothing in the app uses it, so replace it.
+		c.GUI.APIKey = rand.String(32)
 		if _, i, ok := c.Device(cfg.MyID()); ok && c.Devices[i].Name == hostname {
 			c.Devices[i].Name = deviceName
 		}
@@ -143,6 +156,15 @@ func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) 
 	sdb, err := syncthing.OpenDatabase(locations.Get(locations.Database), dbDeleteRetention)
 	if err != nil {
 		return "", fmt.Errorf("open the database: %w", err)
+	}
+
+	// The GUI keeps its sessions in the database, where they outlive this process and stay good for
+	// a week after their last use, whatever the password has become since. The app logs its WebView
+	// in again at every start, so it has no use for the ones that are left, and nobody else should.
+	// This has to come before the GUI starts, because that is when it loads them.
+	if err := sdb.DeleteKV(sessionsKey); err != nil {
+		sdb.Close()
+		return "", fmt.Errorf("end the sessions of earlier runs: %w", err)
 	}
 
 	a, err := syncthing.New(cfg, sdb, evLogger, cert, syncthing.Options{
