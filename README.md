@@ -56,6 +56,10 @@ in the workflow matches the one Syncthing's own `build-syncthing.yaml` uses, tha
 store that `newTokenCookieManager` in `syncthing/lib/api/tokenmanager.go` opens in the database
 that `startup` in `syncthing/lib/syncthing/syncthing.go` hands the GUI, which is the miscellaneous
 database. If it moved, the app would keep working but the logins of earlier runs would stay valid.
+See too that `Serve` in `syncthing/lib/config/wrapper.go` still writes the configuration when it
+stops: `modifyAndSave` in `bridge/bridge.go` counts on that to save the changes `Start` makes before
+the GUI is up. If it no longer did, the app would keep working, but those changes would reach the
+disk only with the next change to the configuration.
 Also look through `GUIConfiguration` in `syncthing/lib/config/guiconfiguration.go` for settings that
 are new and, like the theme, only a matter of taste: `Start` keeps nothing of the GUI's settings
 but the theme from one run to the next, so the user would lose any such setting at every start

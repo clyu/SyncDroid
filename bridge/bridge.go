@@ -139,15 +139,13 @@ func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) 
 	if err != nil {
 		return "", fmt.Errorf("load the configuration: %w", err)
 	}
-	earlyService.Add(cfg)
-	config.RegisterInfoMetrics(cfg)
 
 	// Syncthing names a new device after its host, which on Android is "localhost" on every
 	// device. Any other name is one the user chose in the GUI.
 	hostname, _ := os.Hostname()
 
 	var passwordErr error
-	if _, err := cfg.Modify(func(c *config.Configuration) {
+	if err := modifyAndSave(cfg, func(c *config.Configuration) {
 		// Whoever has a session can change any of the GUI's settings, and they would stay changed
 		// from one run to the next. Some decide how, or whether, the GUI asks for the password and
 		// whom it answers, and the password is only worth something with them as they are by
@@ -177,6 +175,8 @@ func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) 
 	if passwordErr != nil {
 		return "", fmt.Errorf("protect the GUI: %w", passwordErr)
 	}
+	earlyService.Add(cfg)
+	config.RegisterInfoMetrics(cfg)
 
 	sdb, err := syncthing.OpenDatabase(locations.Get(locations.Database), dbDeleteRetention)
 	if err != nil {
@@ -208,6 +208,29 @@ func Start(configDir, homeDir, tmpDir, deviceName, guiUser, guiPassword string) 
 	app = a
 	go watchGUI(a, guiAddr)
 	return "https://" + guiAddr.String() + "/", nil
+}
+
+// modifyAndSave changes cfg with fn and has the change on disk by the time it returns. cfg must not
+// be running as a service yet, and is not running as one afterwards either.
+//
+// A change only goes through while the configuration service runs, and the service then waits five
+// seconds before it writes the change to disk, which it announces with a ConfigSaved event. Start
+// changes the configuration every time, and five seconds on the GUI is often up already: it takes the
+// event for a change and reloads the configuration, and with it draws the This Device panel anew,
+// unfolded, even when the user has just folded it. The service also writes the configuration when it stops, though,
+// so running it only for this change and stopping it at once gets the write, and the event, done
+// before there is a GUI to see it.
+func modifyAndSave(cfg config.Wrapper, fn config.ModifyFunction) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() {
+		cfg.Serve(ctx)
+		close(stopped)
+	}()
+	_, err := cfg.Modify(fn)
+	cancel()
+	<-stopped
+	return err
 }
 
 // CertFile returns the path of the GUI's HTTPS certificate, and "" until Start has worked it out.
